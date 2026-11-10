@@ -1,0 +1,27 @@
+name: pr-guard
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cheap-guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Source policy and Python syntax only
+        run: |
+          python3 -m py_compile bke_backup_master.py tests/test_policy.py tests/test_roundtrip.py
+          python3 -m unittest discover -s tests -p test_policy.py -v
+      - name: Prohibit automatic backup export workflows
+        run: |
+          if grep -R -nE '^[[:space:]]+(push|schedule):' .github/workflows; then
+            echo "FAIL: prohibited automatic production/export trigger"
+            exit 1
+          fi
