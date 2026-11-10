@@ -17,26 +17,34 @@ jobs:
           persist-credentials: false
       - name: Source policy and Python syntax only
         run: |
-          python3 -m py_compile bke_backup_master.py scripts/check_environment.py tests/test_policy.py tests/test_roundtrip.py tests/test_transport.py tests/test_environment_gate.py
+          python3 -m py_compile bke_backup_master.py scripts/check_environment.py scripts/validate_restore_request.py tests/test_policy.py tests/test_roundtrip.py tests/test_transport.py tests/test_environment_gate.py tests/test_restore_request.py
           python3 -m unittest discover -s tests -p test_policy.py -v
           python3 -m unittest discover -s tests -p test_environment_gate.py -v
+          python3 -m unittest discover -s tests -p test_restore_request.py -v
       - name: Reject committed backup material and offline identities
         run: |
           if git ls-files | grep -E '(^|/)(\.env($|\.)|[^/]*\.age$|[^/]*\.dump$|[^/]*\.pgdump$|[^/]*\.receipt\.json$|[^/]*identity[^/]*\.txt$)'; then
             echo "FAIL: backup archive or sensitive evidence committed"
             exit 1
           fi
-      - name: Prohibit automatic backup export workflows
+      - name: Enforce single scheduled backup owner and isolated webhook permissions
         run: |
-          if grep -R -nE '^[[:space:]]+(push|schedule):' .github/workflows; then
-            echo "FAIL: prohibited automatic production/export trigger"
+          set -euo pipefail
+          grep -q "^  schedule:" .github/workflows/scheduled-encrypted-backup.yml
+          grep -q "^  workflow_dispatch:" .github/workflows/scheduled-encrypted-backup.yml
+          grep -q "^  repository_dispatch:" .github/workflows/authenticated-recovery-request.yml
+          if grep -R -nE "^  (push|workflow_run):" .github/workflows; then
+            echo "FAIL: prohibited backup automation trigger"
             exit 1
           fi
-      - name: Manual export must never have automatic triggers
-        run: |
-          grep -q "^  workflow_dispatch:" .github/workflows/manual-production-backup.yml
-          if grep -nE "^  (push|pull_request|schedule|workflow_call):" .github/workflows/manual-production-backup.yml; then
-            echo "FAIL: production export must be manual-only"
+          if grep -nE "^  (push|pull_request|repository_dispatch|workflow_call):" .github/workflows/scheduled-encrypted-backup.yml; then
+            echo "FAIL: encrypted export may run only via cron or explicit manual dispatch"
             exit 1
           fi
-          test "$(grep -c "python3 scripts/check_environment.py" .github/workflows/manual-production-backup.yml)" -eq 2
+          if grep -nE "^  (push|pull_request|schedule|workflow_dispatch):" .github/workflows/authenticated-recovery-request.yml; then
+            echo "FAIL: recovery request intake must never become export/restore workflow"
+            exit 1
+          fi
+          test "$(grep -c "python3 scripts/check_environment.py" .github/workflows/scheduled-encrypted-backup.yml)" -eq 2
+          grep -q "BACKUP_AUTOMATION_ENABLED == 'true'" .github/workflows/scheduled-encrypted-backup.yml
+          ! grep -qE "(secrets\.|environment:)" .github/workflows/authenticated-recovery-request.yml
