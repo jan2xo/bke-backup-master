@@ -1,0 +1,18 @@
+# Local credentials, encrypted production archives, offline identities and receipts.
+.env
+.env.*
+!.env.example
+*.dump
+*.pgdump
+*.sql
+*.age
+*.receipt.json
+*.private.json
+*restore-report*.json
+*identity*.txt
+local-evidence/
+backups/
+# Python
+__pycache__/
+*.py[cod]
+.venv/
