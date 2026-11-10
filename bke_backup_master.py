@@ -197,7 +197,9 @@ def download_rest(key: str, dest: Path, *, account: str, bucket: str, token: str
 def dump_encrypted(destination: Path, source_url: str, recipient: str) -> None:
     if not re.fullmatch(r"age1[0-9a-z]{58}", recipient):
         raise BackupError("AGE_RECIPIENT must be a single age X25519 public recipient")
-    env = {k: v for k, v in os.environ.items() if not k.startswith("PG")}
+    safe_base = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "SSL_CERT_FILE", "SSL_CERT_DIR")
+                 if k in os.environ}
+    env = dict(safe_base)
     env.update(validate_neon_url(source_url))
     verify_pg17("pg_dump", "pg_dump")
     if not shutil.which("age"):
@@ -207,7 +209,8 @@ def dump_encrypted(destination: Path, source_url: str, recipient: str) -> None:
     assert dump.stdout is not None
     try:
         age = subprocess.Popen(["age", "-r", recipient, "-o", str(destination)],
-                               stdin=dump.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                               stdin=dump.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                               env=safe_base)
         dump.stdout.close()
         _, age_error = age.communicate()
         _, dump_error = dump.communicate()
@@ -289,6 +292,16 @@ def isolation_preflight() -> None:
         raise BackupError("Docker is required for a fresh, isolated restore destination")
     if not shutil.which("age"):
         raise BackupError("age is required for offline decryption")
+    if any(os.environ.get(name) for name in ("DOCKER_HOST", "DOCKER_CONTEXT",
+                                            "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH")):
+        raise BackupError("restore refuses Docker endpoint/context environment overrides")
+    try:
+        contexts = json.loads(command(["docker", "context", "inspect"]))
+        address = contexts[0]["Endpoints"]["docker"]["Host"]
+    except (ValueError, IndexError, KeyError, TypeError) as exc:
+        raise BackupError("cannot verify Docker daemon endpoint") from exc
+    if not address.startswith("unix://"):
+        raise BackupError("restore requires a local Unix-socket Docker engine")
 
 
 def docker(argv: list[str]) -> str:
@@ -366,10 +379,17 @@ def restore_isolated(archive: Path) -> dict:
                 "successful_prisma_migrations": int(migration_rows),
                 "application_startup": "NOT_TESTED", "target": "fresh-network-none-container-removed"}
     finally:
+        cleanup_errors = []
         if started:
-            subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+            result = subprocess.run(["docker", "rm", "-f", container], capture_output=True)
+            if result.returncode:
+                cleanup_errors.append("container")
         if created_volume:
-            subprocess.run(["docker", "volume", "rm", "-f", volume], capture_output=True)
+            result = subprocess.run(["docker", "volume", "rm", "-f", volume], capture_output=True)
+            if result.returncode:
+                cleanup_errors.append("volume")
+        if cleanup_errors:
+            raise BackupError("ISOLATED_RESTORE_CLEANUP_FAILED: " + ",".join(cleanup_errors))
 
 
 def restore(args) -> None:
