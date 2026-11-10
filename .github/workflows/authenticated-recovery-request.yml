@@ -1,0 +1,29 @@
+name: authenticated-recovery-request
+
+# GitHub hosts the authenticated request intake. No extra Worker or server.
+on:
+  repository_dispatch:
+    types:
+      - bke_restore_requested
+
+permissions:
+  contents: read
+
+jobs:
+  accept-request-only:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate signed GitHub event actor and strict restore envelope
+        env:
+          RESTORE_DISPATCH_SENDER_ID: ${{ vars.RESTORE_DISPATCH_SENDER_ID }}
+        run: |
+          set -euo pipefail
+          python3 scripts/validate_restore_request.py
+      - name: Explicit nonexecution boundary
+        run: |
+          echo "RECOVERY REQUEST ACCEPTED: no decrypt, database, R2 or restore permissions granted"
