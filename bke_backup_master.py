@@ -204,16 +204,18 @@ def dump_encrypted(destination: Path, source_url: str, recipient: str) -> None:
     verify_pg17("pg_dump", "pg_dump")
     if not shutil.which("age"):
         raise BackupError("age encryption binary is required")
+    # A pipe that is not concurrently drained can deadlock under heavy pg_dump stderr.
+    # Suppress potentially credential-bearing stderr and report only safe process exit codes.
     dump = subprocess.Popen(["pg_dump", "-Fc", "--no-owner", "--no-acl", "-d", env["PGDATABASE"]],
-                            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     assert dump.stdout is not None
     try:
         age = subprocess.Popen(["age", "-r", recipient, "-o", str(destination)],
-                               stdin=dump.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                               stdin=dump.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                env=safe_base)
         dump.stdout.close()
-        _, age_error = age.communicate()
-        _, dump_error = dump.communicate()
+        age.wait()
+        dump.wait()
         if dump.returncode or age.returncode:
             raise BackupError(f"encrypted pg_dump failed (pg_dump={dump.returncode}, age={age.returncode})")
         if not destination.exists() or destination.stat().st_size < 32:

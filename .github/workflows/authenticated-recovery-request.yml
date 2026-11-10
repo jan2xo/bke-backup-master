@@ -1,0 +1,30 @@
+name: authenticated-recovery-request
+
+# GitHub Issues handles narrowly scoped authenticated recovery requests.
+# The caller needs Issues:write only, never Contents:write or Actions:write.
+on:
+  issues:
+    types:
+      - opened
+
+permissions:
+  contents: read
+
+jobs:
+  accept-request-only:
+    if: github.ref == 'refs/heads/main' && format('{0}', github.event.sender.id) == vars.RESTORE_DISPATCH_SENDER_ID
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate GitHub issue creator and strict restore request envelope
+        env:
+          RESTORE_DISPATCH_SENDER_ID: ${{ vars.RESTORE_DISPATCH_SENDER_ID }}
+        run: |
+          set -euo pipefail
+          python3 scripts/validate_restore_request.py
+      - name: Explicit nonexecution boundary
+        run: |
+          echo "RECOVERY REQUEST ACCEPTED: no decrypt, database, R2 or restore permissions granted"

@@ -1,7 +1,9 @@
-name: manual-production-backup
+name: scheduled-encrypted-neon-backup
 
-# Never executes on push, PR, merge or schedule.
+# Exports only after an explicit operator activation flag; no PR/push backup.
 on:
+  schedule:
+    - cron: '17 19 * * *'  # 03:17 Asia/Manila daily (UTC+8)
   workflow_dispatch:
     inputs:
       expected_sha:
@@ -21,24 +23,25 @@ permissions:
   deployments: read
 
 concurrency:
-  group: bke-one-manual-production-backup
+  group: bke-one-encrypted-production-backup
   cancel-in-progress: false
 
 jobs:
   validate-approval-boundary:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && vars.BACKUP_AUTOMATION_ENABLED == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Checkout the exact main revision (NO production secrets)
+      - name: Checkout exact main revision without production secrets
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Refuse missing reviewer/branch protection before environment is referenced
+      - name: Require armed mode and existing main-restricted backup environment
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          BACKUP_EXPECTED_SHA: ${{ inputs.expected_sha }}
-          BACKUP_OPERATION: ${{ inputs.operation }}
+          BACKUP_EXPECTED_SHA: ${{ github.event_name == 'schedule' && github.sha || inputs.expected_sha }}
+          BACKUP_OPERATION: ${{ github.event_name == 'schedule' && 'BACKUP_ONLY_NO_RESTORE' || inputs.operation }}
+          BACKUP_AUTOMATION_ENABLED: ${{ vars.BACKUP_AUTOMATION_ENABLED }}
         run: python3 scripts/check_environment.py
 
   manual-encrypted-export:
@@ -48,11 +51,11 @@ jobs:
     environment: Backup-Production
     timeout-minutes: 60
     steps:
-      - name: Checkout approved immutable main revision
+      - name: Checkout scheduled immutable main revision
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Recheck protection after the human deployment review
+      - name: Recheck exact-main environment gate before accessing secrets
         env:
           GITHUB_TOKEN: ${{ github.token }}
           BACKUP_EXPECTED_SHA: ${{ inputs.expected_sha }}
