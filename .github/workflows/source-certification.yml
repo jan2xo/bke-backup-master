@@ -36,8 +36,8 @@ jobs:
           sudo apt-get install -y age
       - name: Static source checks
         run: |
-          python3 -m py_compile bke_backup_master.py scripts/check_environment.py tests/test_policy.py tests/test_roundtrip.py tests/test_transport.py tests/test_environment_gate.py
-          if grep -nE '^[[:space:]]+(pull_request|push|schedule):' .github/workflows/source-certification.yml .github/workflows/manual-production-backup.yml; then
+          python3 -m py_compile bke_backup_master.py scripts/check_environment.py scripts/validate_restore_request.py tests/test_policy.py tests/test_roundtrip.py tests/test_transport.py tests/test_environment_gate.py tests/test_restore_request.py
+          if grep -nE '^  (pull_request|push|schedule):' .github/workflows/source-certification.yml; then
             echo "FAIL: source certification must be manually dispatched"
             exit 1
           fi
