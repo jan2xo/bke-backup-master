@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed GitHub environment gate, called both BEFORE and AFTER approval.
+"""Fail-closed main-only GitHub environment gate for unattended encrypted backups.
 
 Never fetches secret values. Uses only read-only GitHub Actions API requests.
 A missing/unprotected Backup-Production environment is a hard stop.
@@ -19,8 +19,11 @@ class EnvironmentGateError(RuntimeError):
 
 
 def verify_execution_context(env: dict[str, str]) -> None:
-    if env.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
-        raise EnvironmentGateError("BACKUP_DENIED: manual workflow_dispatch required")
+    event = env.get("GITHUB_EVENT_NAME")
+    if event not in ("schedule", "workflow_dispatch"):
+        raise EnvironmentGateError("BACKUP_DENIED: schedule or manual workflow_dispatch required")
+    if env.get("BACKUP_AUTOMATION_ENABLED") != "true":
+        raise EnvironmentGateError("BACKUP_DENIED: BACKUP_AUTOMATION_ENABLED is not armed")
     if env.get("GITHUB_REF") != "refs/heads/main":
         raise EnvironmentGateError("BACKUP_DENIED: main only")
     sha = env.get("GITHUB_SHA", "")
@@ -58,9 +61,8 @@ def verify_environment_policy(metadata: dict, branches: dict) -> None:
     rules = metadata.get("protection_rules")
     if not isinstance(rules, list):
         raise EnvironmentGateError("BACKUP_DENIED: environment protection unknown")
-    reviewer_rules = [r for r in rules if r.get("type") == "required_reviewers"]
-    if len(reviewer_rules) != 1 or not reviewer_rules[0].get("reviewers"):
-        raise EnvironmentGateError("BACKUP_DENIED: environment required reviewers missing")
+    # Routine backups are unattended. Reviewers are not required for the backup-only lane.
+    # Human authorisation remains necessary for any future destructive recovery lane.
     policy = metadata.get("deployment_branch_policy")
     if not isinstance(policy, dict) or policy.get("custom_branch_policies") is not True:
         raise EnvironmentGateError("BACKUP_DENIED: environment must restrict allowed branches")
@@ -85,7 +87,7 @@ def verify_environment(env: dict[str, str]) -> None:
 def main() -> int:
     try:
         verify_environment(dict(os.environ))
-        print("BACKUP GATE PASS: manual exact-main dispatch, protected reviewer environment and main-only policy.")
+        print("BACKUP GATE PASS: armed backup-only schedule/manual main, existing main-only environment.")
         return 0
     except EnvironmentGateError as exc:
         print(str(exc), file=sys.stderr)
