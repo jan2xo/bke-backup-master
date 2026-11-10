@@ -32,8 +32,8 @@ def verify_execution_context(env: dict[str, str]) -> None:
         raise EnvironmentGateError("BACKUP_DENIED: expected exact main SHA mismatch")
     if env.get("BACKUP_OPERATION") != "BACKUP_ONLY_NO_RESTORE":
         raise EnvironmentGateError("BACKUP_DENIED: explicit backup-only operation required")
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", env.get("GITHUB_REPOSITORY", "")):
-        raise EnvironmentGateError("BACKUP_DENIED: malformed repository identity")
+    if env.get("GITHUB_REPOSITORY") != "jan2xo/bke-backup-master":
+        raise EnvironmentGateError("BACKUP_DENIED: source repository identity mismatch")
     if not env.get("GITHUB_TOKEN"):
         raise EnvironmentGateError("BACKUP_DENIED: API read token missing")
 
