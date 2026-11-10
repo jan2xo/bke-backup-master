@@ -1,0 +1,103 @@
+name: manual-production-backup
+
+# Never executes on push, PR, merge or schedule.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact current main SHA, 40 lowercase hex characters
+        required: true
+        type: string
+      operation:
+        description: Explicit operator-selected action
+        required: true
+        type: choice
+        options:
+          - BACKUP_ONLY_NO_RESTORE
+
+permissions:
+  contents: read
+  actions: read
+  deployments: read
+
+concurrency:
+  group: bke-one-manual-production-backup
+  cancel-in-progress: false
+
+jobs:
+  validate-approval-boundary:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout the exact main revision (NO production secrets)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Refuse missing reviewer/branch protection before environment is referenced
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BACKUP_EXPECTED_SHA: ${{ inputs.expected_sha }}
+          BACKUP_OPERATION: ${{ inputs.operation }}
+        run: python3 scripts/check_environment.py
+
+  manual-encrypted-export:
+    needs: validate-approval-boundary
+    if: needs.validate-approval-boundary.result == 'success'
+    runs-on: ubuntu-24.04
+    environment: Backup-Production
+    timeout-minutes: 60
+    steps:
+      - name: Checkout approved immutable main revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Recheck protection after the human deployment review
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BACKUP_EXPECTED_SHA: ${{ inputs.expected_sha }}
+          BACKUP_OPERATION: ${{ inputs.operation }}
+        run: python3 scripts/check_environment.py
+      - name: Install age and verify Docker availability
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y age
+          docker info >/dev/null
+          mkdir -p "$RUNNER_TEMP/pg17-bin"
+          cat > "$RUNNER_TEMP/pg17-bin/pg_dump" <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec docker run --rm --network bridge \
+            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE \
+            -e PGSSLMODE -e PGCHANNELBINDING -e PGOPTIONS \
+            postgres:17 pg_dump "$@"
+          SCRIPT
+          chmod 0700 "$RUNNER_TEMP/pg17-bin/pg_dump"
+          echo "$RUNNER_TEMP/pg17-bin" >> "$GITHUB_PATH"
+      - name: Prepare optional multipart client
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/bke-backup-env"
+          "$RUNNER_TEMP/bke-backup-env/bin/pip" install --disable-pip-version-check -r requirements-multipart.txt
+          echo "$RUNNER_TEMP/bke-backup-env/bin" >> "$GITHUB_PATH"
+      - name: One PostgreSQL-only encrypted backup (never print secrets, keys or receipt)
+        env:
+          NEON_READONLY_DATABASE_URL: ${{ secrets.NEON_READONLY_DATABASE_URL }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_R2_BACKUP_API_TOKEN: ${{ secrets.CF_R2_BACKUP_API_TOKEN }}
+          CF_R2_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+          CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+          CF_R2_BUCKET: bke-digital-solutions-backups
+          AGE_RECIPIENT: ${{ vars.AGE_RECIPIENT }}
+        run: |
+          set -euo pipefail
+          test -n "$NEON_READONLY_DATABASE_URL"
+          test -n "$CF_ACCOUNT_ID"
+          test -n "$CF_R2_BACKUP_API_TOKEN"
+          test -n "$AGE_RECIPIENT"
+          python3 bke_backup_master.py backup
+      - name: Outcome boundary
+        if: always()
+        run: |
+          echo "POSTGRESQL-ONLY BACKUP: ${{ job.status }} | head=${{ github.sha }} | application restore NOT TESTED | no archive artifacts uploaded to GitHub"

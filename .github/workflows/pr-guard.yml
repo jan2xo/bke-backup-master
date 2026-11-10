@@ -17,8 +17,9 @@ jobs:
           persist-credentials: false
       - name: Source policy and Python syntax only
         run: |
-          python3 -m py_compile bke_backup_master.py tests/test_policy.py tests/test_roundtrip.py
+          python3 -m py_compile bke_backup_master.py scripts/check_environment.py tests/test_policy.py tests/test_roundtrip.py tests/test_transport.py tests/test_environment_gate.py
           python3 -m unittest discover -s tests -p test_policy.py -v
+          python3 -m unittest discover -s tests -p test_environment_gate.py -v
       - name: Reject committed backup material and offline identities
         run: |
           if git ls-files | grep -E '(^|/)(\.env($|\.)|[^/]*\.age$|[^/]*\.dump$|[^/]*\.pgdump$|[^/]*\.receipt\.json$|[^/]*identity[^/]*\.txt$)'; then
@@ -31,3 +32,11 @@ jobs:
             echo "FAIL: prohibited automatic production/export trigger"
             exit 1
           fi
+      - name: Manual export must never have automatic triggers
+        run: |
+          grep -q "^  workflow_dispatch:" .github/workflows/manual-production-backup.yml
+          if grep -nE "^  (push|pull_request|schedule|workflow_call):" .github/workflows/manual-production-backup.yml; then
+            echo "FAIL: production export must be manual-only"
+            exit 1
+          fi
+          test "$(grep -c "python3 scripts/check_environment.py" .github/workflows/manual-production-backup.yml)" -eq 2
