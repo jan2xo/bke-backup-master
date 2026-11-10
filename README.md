@@ -41,16 +41,22 @@ python3 bke_backup_master.py restore \
 
 Never paste real secrets in command arguments or issue comments. Run recovery on a trusted disposable operator host: Docker access is privileged. The restore Docker container has **no network** and is created afresh every time; the plaintext dump is limited to ephemeral working storage. Protect the host filesystem because crash/abrupt shutdown can leave temporary plaintext behind.
 
+## Manual public-repository production-backup wiring
+
+The owner elected to **keep this source repository public**. Public GitHub repositories can use protected environments with required reviewers and environment secrets. The new `manual-production-backup.yml` is **workflow_dispatch only**, with two read-only GitHub API guard checks before any production credentials can be used. Its first guard rejects a missing/unprotected environment, so a normal workflow cannot silently create an unprotected `Backup-Production` environment. It **never** runs on push, PR or merge, and it is **not** authorized/configured to export production data by this source wave.
+
+See [public-repository operations and environment setup](docs/PUBLIC-REPO-OPERATIONS.md). Never paste secrets into a public discussion, a log or a commit.
+
 ## Exact-head certification
 
 - \`pr-guard.yml\`: only cheap Python syntax, safety tests and workflow-trigger hygiene run automatically for PR events.
 - \`source-certification.yml\`: **manual \`workflow_dispatch\` only**, requires exact \`expected_sha\`, runs a real PostgreSQL 17 synthetic fixture through real \`pg_dump\` + \`age\`, simulated in-memory R2 upload/download, actual decryption and actual isolated PostgreSQL 17 \`pg_restore\`. Tampered receipts/ciphertext must fail. This proves source pipeline, **not** Cloudflare's live API or a real Neon production archive.
-- No production backup workflow, cron, push-triggered export or production secret configuration is included in this source wave. Source certification must pass against the final PR head before SHA-locked merge.
-- Do **not** create an \`environment: Backup-Production\` workflow before the repository is private and the environment is manually configured with required reviewers. GitHub can auto-create unprotected environments when first referenced.
+- A manual production backup workflow is provided as an **inert, fail-closed template**, not executed; no production secrets or automatic export/schedule are provisioned. Source certification must pass against the final PR head before SHA-locked merge.
+- Keep the repository **public** as requested. Do **not** dispatch the real backup until `Backup-Production` has verified required reviewers and an exact `main` branch deployment policy; the new workflow checks these **before** referencing the environment.
 
 ## Operational gates still open
 
-A later separately authorized step must make this repository private, establish protected \`Backup-Production\` and least-privilege account/db credentials, perform one manually approved real export, independently verify R2 readback, restore on an isolated host, test disposable app startup, and document offline key escrow, alerts and retention. Proposed retention is **7 daily / 4 weekly / 12 monthly** but is not activated; legal holds and deletion require explicit policy.
+A later separately authorized step must establish protected \`Backup-Production\` and least-privilege account/db credentials on this **public** repository, perform one manually approved real export, independently verify R2 readback, restore on an isolated host, test disposable app startup, and document offline key escrow, alerts and retention. Proposed retention is **7 daily / 4 weekly / 12 monthly** but is not activated; legal holds and deletion require explicit policy.
 
 **Truth labels:** SOURCE SYNTHETIC PASS ≠ PRODUCTION BACKUP PASS ≠ OFFSITE VERIFIED ≠ DATABASE RESTORE PASS ≠ APPLICATION RECOVERY PASS. An R2 object with a receipt still shares the account-level failure domain; cross-provider/off-account backup independence remains separate proof. Unique object keys are not WORM/object-lock enforcement.
 
