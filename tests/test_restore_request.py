@@ -5,7 +5,7 @@ from scripts import validate_restore_request as r
 
 def environment():
     return {
-        "GITHUB_EVENT_NAME": "repository_dispatch",
+        "GITHUB_EVENT_NAME": "issues",
         "GITHUB_REF": "refs/heads/main",
         "GITHUB_REPOSITORY": "jan2xo/bke-backup-master",
         "RESTORE_DISPATCH_SENDER_ID": "163499503",
@@ -13,14 +13,20 @@ def environment():
 
 
 def request():
+    token = str(uuid.uuid4())
     return {
-        "action": "bke_restore_requested",
+        "action": "opened",
         "sender": {"id": 163499503, "login": "jan2xo"},
-        "client_payload": {
-            "request_id": str(uuid.uuid4()),
-            "source": "bke-digital-solutions",
-            "intent": "RESTORE_ISOLATED_REQUEST_ONLY",
-            "source_commit": "a" * 40,
+        "issue": {
+            "state": "open",
+            "user": {"id": 163499503},
+            "title": "BKE RECOVERY REQUEST " + token,
+            "body": __import__("json").dumps({
+                "request_id": token,
+                "source": "bke-digital-solutions",
+                "intent": "RESTORE_ISOLATED_REQUEST_ONLY",
+                "source_commit": "a" * 40,
+            }),
         }
     }
 
@@ -28,7 +34,7 @@ def request():
 class RecoveryRequestTests(unittest.TestCase):
     def test_authenticated_request_is_accepted_but_only_a_request(self):
         incoming = request()
-        self.assertEqual(r.verify(incoming, environment()), incoming["client_payload"]["request_id"])
+        self.assertEqual(r.verify(incoming, environment()), __import__("json").loads(incoming["issue"]["body"])["request_id"])
 
     def test_wrong_caller_and_unconfigured_allowlist_rejected(self):
         source = request()
@@ -47,7 +53,9 @@ class RecoveryRequestTests(unittest.TestCase):
     def test_refuse_database_url_archive_key_and_target_in_payload(self):
         for extra in ("database_url", "target", "archive_key", "age_identity", "callback_url"):
             modified = request()
-            modified["client_payload"][extra] = "production"
+            body = __import__("json").loads(modified["issue"]["body"])
+            body[extra] = "production"
+            modified["issue"]["body"] = __import__("json").dumps(body)
             with self.subTest(extra=extra), self.assertRaises(r.RequestDenied):
                 r.verify(modified, environment())
 
@@ -61,11 +69,13 @@ class RecoveryRequestTests(unittest.TestCase):
             ("request_id", str(uuid.uuid1())),
         ):
             modified = request()
-            modified["client_payload"][k] = value
+            body = __import__("json").loads(modified["issue"]["body"])
+            body[k] = value
+            modified["issue"]["body"] = __import__("json").dumps(body)
             with self.subTest(field=k), self.assertRaises(r.RequestDenied):
                 r.verify(modified, environment())
         evt = request()
-        evt["action"] = "other"
+        evt["action"] = "edited"
         with self.assertRaises(r.RequestDenied):
             r.verify(evt, environment())
 
