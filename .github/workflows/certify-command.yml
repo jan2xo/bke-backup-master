@@ -1,0 +1,52 @@
+name: certify-command
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: write
+
+jobs:
+  dispatch-source-only:
+    if: >-
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/certify backup-source ') &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.comment.body.trim();
+            const match = /^\/certify backup-source ([0-9a-f]{40})$/.exec(body);
+            if (!match) {
+              core.setFailed('Invalid certification command; exact head SHA is mandatory');
+              return;
+            }
+            const {data: pr} = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            if (pr.state !== 'open' || pr.head.repo.full_name !== context.repo.owner + '/' + context.repo.repo) {
+              core.setFailed('Only open same-repository PRs can run source certification');
+              return;
+            }
+            if (pr.head.sha !== match[1]) {
+              core.setFailed('Stale requested SHA; refresh the exact PR head');
+              return;
+            }
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'source-certification.yml',
+              ref: pr.head.ref,
+              inputs: {expected_sha: match[1]}
+            });
+            core.info('Explicit source-only certification dispatched for exact SHA ' + match[1]);
