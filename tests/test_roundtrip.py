@@ -39,6 +39,8 @@ class SyntheticRestoreTests(unittest.TestCase):
             sql("INSERT INTO public._prisma_migrations VALUES ('fixture', now(), null)")
             sql('CREATE TABLE public."User" (id integer PRIMARY KEY, email text NOT NULL)')
             sql('CREATE TABLE public."Order" (id integer PRIMARY KEY, user_id integer REFERENCES public."User"(id))')
+            for model in ("Payment", "Invoice", "Subscription", "License"):
+                sql(f'CREATE TABLE public."{model}" (id integer PRIMARY KEY)')
             sql('INSERT INTO public."User" VALUES (1, \u0027synthetic@example.invalid\u0027)')
             sql('INSERT INTO public."Order" VALUES (1, 1)')
         except Exception:
@@ -99,6 +101,9 @@ class SyntheticRestoreTests(unittest.TestCase):
                 self.assertEqual(report["database_restore"],"PASS")
                 self.assertGreaterEqual(report["tables"],3)
                 self.assertEqual(report["application_startup"],"NOT_TESTED")
+                self.assertEqual(report["critical_table_counts"]["User"],1)
+                self.assertEqual(report["critical_table_counts"]["Order"],1)
+                self.assertEqual(report["critical_table_counts"]["License"],0)
                 original=r2[key]
                 r2[key]=original[:-1]+bytes([original[-1]^1])
                 with self.assertRaisesRegex(b.BackupError,"CIPHERTEXT_CHECKSUM_MISMATCH"):
