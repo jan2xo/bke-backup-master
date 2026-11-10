@@ -19,6 +19,12 @@ jobs:
         run: |
           python3 -m py_compile bke_backup_master.py tests/test_policy.py tests/test_roundtrip.py
           python3 -m unittest discover -s tests -p test_policy.py -v
+      - name: Reject committed backup material and offline identities
+        run: |
+          if git ls-files | grep -E '(^|/)(\.env($|\.)|[^/]*\.age$|[^/]*\.dump$|[^/]*\.pgdump$|[^/]*\.receipt\.json$|[^/]*identity[^/]*\.txt$)'; then
+            echo "FAIL: backup archive or sensitive evidence committed"
+            exit 1
+          fi
       - name: Prohibit automatic backup export workflows
         run: |
           if grep -R -nE '^[[:space:]]+(push|schedule):' .github/workflows; then
