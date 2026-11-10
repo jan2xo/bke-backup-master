@@ -27,12 +27,12 @@ jobs:
             echo "FAIL: backup archive or sensitive evidence committed"
             exit 1
           fi
-      - name: Enforce single scheduled backup owner and isolated webhook permissions
+      - name: Enforce single scheduled backup owner and Issues-only recovery intake
         run: |
           set -euo pipefail
           grep -q "^  schedule:" .github/workflows/scheduled-encrypted-backup.yml
           grep -q "^  workflow_dispatch:" .github/workflows/scheduled-encrypted-backup.yml
-          grep -q "^  repository_dispatch:" .github/workflows/authenticated-recovery-request.yml
+          grep -q "^  issues:" .github/workflows/authenticated-recovery-request.yml
           if grep -R -nE "^  (push|workflow_run):" .github/workflows; then
             echo "FAIL: prohibited backup automation trigger"
             exit 1
@@ -41,7 +41,7 @@ jobs:
             echo "FAIL: encrypted export may run only via cron or explicit manual dispatch"
             exit 1
           fi
-          if grep -nE "^  (push|pull_request|schedule|workflow_dispatch):" .github/workflows/authenticated-recovery-request.yml; then
+          if grep -nE "^  (push|pull_request|schedule|workflow_dispatch|repository_dispatch):" .github/workflows/authenticated-recovery-request.yml; then
             echo "FAIL: recovery request intake must never become export/restore workflow"
             exit 1
           fi
