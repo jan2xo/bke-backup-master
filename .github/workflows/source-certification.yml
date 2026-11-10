@@ -1,0 +1,50 @@
+name: source-certification
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact source SHA to certify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-source-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic-recovery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BKE_SYNTHETIC_INTEGRATION: "1"
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Bind exact SHA
+        run: |
+          test "$EXPECTED_SHA" = "$GITHUB_SHA" || { echo "FAIL: stale certification SHA"; exit 1; }
+      - name: Install age for synthetic fixture
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y age
+      - name: Static source checks
+        run: |
+          python3 -m py_compile bke_backup_master.py tests/test_policy.py tests/test_roundtrip.py
+          if grep -nE '^[[:space:]]+(pull_request|push|schedule):' .github/workflows/source-certification.yml; then
+            echo "FAIL: source certification must be manually dispatched"
+            exit 1
+          fi
+      - name: Real PG17 dump + age + synthetic R2 + isolated restore
+        run: |
+          python3 -m unittest discover -s tests -v
+      - name: Compact source-only capsule
+        if: always()
+        run: |
+          echo "BACKUP SOURCE: ${{ job.status }} | sha=$GITHUB_SHA | synthetic only | production untouched"
