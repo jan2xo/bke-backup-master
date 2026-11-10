@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 from urllib.request import Request, urlopen
 
 API_HOST = "api.cloudflare.com"
-LIMIT = 300_000_000  # Cloudflare REST upload endpoint, decimal MB
+LIMIT = 299_000_000  # Conservative margin below Cloudflare's 300 MB REST body limit
 CHUNK = 1024 * 1024
 RECEIPT_VERSION = 1
 BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{2,62}$")
@@ -281,7 +281,7 @@ def isolation_preflight() -> None:
     forbidden = {"DATABASE_URL", "DIRECT_URL", "NEON_READONLY_DATABASE_URL",
                  "PRODUCTION_DATABASE_URL", "RESTORE_TARGET_DATABASE_URL",
                  "PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGSERVICE"}
-    present = sorted(name for name in forbidden if os.environ.get(name))
+    present = sorted(name for name in os.environ if os.environ.get(name) and (name in forbidden or name.startswith("PG")))
     if present:
         raise BackupError("unsafe restore environment contains database destination/source settings: " +
                           ", ".join(present))
@@ -304,6 +304,9 @@ def restore_isolated(archive: Path) -> dict:
     created_volume = False
     started = False
     try:
+        if subprocess.run(["docker", "volume", "inspect", volume], stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL).returncode == 0:
+            raise BackupError("RESTORE_VOLUME_ALREADY_EXISTS")
         docker(["volume", "create", volume])
         created_volume = True
         docker(["run", "--rm", "-d", "--name", container, "--network", "none",
@@ -353,7 +356,13 @@ def restore_isolated(archive: Path) -> dict:
                               "SELECT count(*) FROM pg_constraint WHERE contype='f' AND NOT convalidated"])
         if int(unvalidated):
             raise BackupError("UNVALIDATED_FOREIGN_KEYS")
+        critical_counts = {}
+        for table in ("User", "Order", "Payment", "Invoice", "Subscription", "License"):
+            count = docker(["exec", container, "psql", "-U", "postgres", "-d", db, "-Atc",
+                            f'SELECT count(*) FROM public."{table}"'])
+            critical_counts[table] = int(count)
         return {"database_restore": "PASS", "pg_major": 17, "tables": tables,
+                "critical_table_counts": critical_counts,
                 "successful_prisma_migrations": int(migration_rows),
                 "application_startup": "NOT_TESTED", "target": "fresh-network-none-container-removed"}
     finally:
@@ -391,7 +400,9 @@ def restore(args) -> None:
             raise BackupError("CIPHERTEXT_CHECKSUM_MISMATCH")
         plaintext = directory / "plaintext.dump"
         command(["age", "-d", "-i", str(identity), "-o", str(plaintext), str(encrypted)])
-        if plaintext.read_bytes()[:5] != b"PGDMP":
+        with plaintext.open("rb") as dump_stream:
+            magic = dump_stream.read(5)
+        if magic != b"PGDMP":
             raise BackupError("DECRYPTED_ARCHIVE_IS_NOT_CUSTOM_PGDUMP")
         report = restore_isolated(plaintext)
         if args.report_out:
